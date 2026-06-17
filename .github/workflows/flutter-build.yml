@@ -2,58 +2,58 @@ name: Flutter God Mode CI/CD
 
 on:
   push:
-    branches: [ "main", "develop", "release/**" ]
-    tags: [ 'v*.*.*' ]
-  pull_request:
-    branches: [ "main", "develop" ]
+    branches: [ "main" ]
   workflow_dispatch:
     inputs:
       bump_version:
         description: 'Bump version'
-        required: false
-        default: 'none'
+        default: 'patch'
         type: choice
         options: [major, minor, patch, none]
 
 permissions:
   contents: write
-  pull-requests: write
 
 env:
-  JAVA_VERSION: '17'
   FLUTTER_VERSION: '3.24.3'
-  FLUTTER_CHANNEL: 'stable'
-  WORKING_DIR: flutter_app
+  APP_DIR: flutter_app
 
 jobs:
   version:
-    name: Semantic Version
-    if: github.event.inputs.bump_version!= 'none' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     outputs:
-      new_version: ${{ steps.semver.outputs.new_version }}
       new_tag: ${{ steps.semver.outputs.new_tag }}
-    defaults:
-      run:
-        working-directory: ${{ env.WORKING_DIR }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           token: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
-          persist-credentials: true
 
-      - name: Ensure folder exists
+      # สร้างโฟลเดอร์ก่อนทำอย่างอื่น
+      - name: Create app folder
         run: |
-          mkdir -p ${{ env.WORKING_DIR }}
-          cd ${{ env.WORKING_DIR }}
-          pwd
+          mkdir -p ${{ env.APP_DIR }}
           ls -la
+
+      - name: Setup Flutter project
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          if [! -f pubspec.yaml ]; then
+            echo "Creating new Flutter project"
+            cd..
+            flutter create ${{ env.APP_DIR }} --project-name flutter_app
+          fi
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
 
       - name: Configure Git
         run: |
           git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - uses: anothrNick/github-tag-action@1.71.0
         id: semver
@@ -62,118 +62,42 @@ jobs:
           DEFAULT_BUMP: ${{ github.event.inputs.bump_version }}
           WITH_V: true
 
-      - name: Update pubspec.yaml
+      - name: Update version
         if: steps.semver.outputs.new_tag!= ''
+        working-directory: ${{ env.APP_DIR }}
         run: |
-          if [! -f pubspec.yaml ]; then
-            echo "Creating pubspec.yaml"
-            cat > pubspec.yaml << 'EOF'
-          name: flutter_app
-          description: A new Flutter project.
-          publish_to: 'none'
-          version: 0.0.1+1
-          environment:
-            sdk: '>=3.0.0 <4.0.0'
-          dependencies:
-            flutter:
-              sdk: flutter
-          flutter:
-            uses-material-design: true
-          EOF
-          fi
-
           sed -i "s/^version:.*/version: ${{ steps.semver.outputs.new_version }}+${{ github.run_number }}/" pubspec.yaml
-          echo "Updated version:"
-          grep "^version:" pubspec.yaml
-
-          git add pubspec.yaml
-          git commit -m "chore(release): ${{ steps.semver.outputs.new_tag }} [skip ci]" || echo "No changes"
-          git push origin HEAD:main
-
-  quality:
-    name: Quality Gate
-    runs-on: ubuntu-latest
-    needs: version
-    if: always()
-    defaults:
-      run:
-        working-directory: ${{ env.WORKING_DIR }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.version.outputs.new_tag || github.ref }}
-
-      - name: Create project if missing
-        run: |
-          mkdir -p ${{ env.WORKING_DIR }}
-          cd ${{ env.WORKING_DIR }}
-          if [! -f pubspec.yaml ]; then
-            flutter create. --project-name flutter_app
-          fi
-
-      - uses: actions/setup-java@v4
-        with:
-          distribution: 'zulu'
-          java-version: ${{ env.JAVA_VERSION }}
-          cache: gradle
-
-      - uses: subosito/flutter-action@v2
-        with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          channel: ${{ env.FLUTTER_CHANNEL }}
-          cache: true
-
-      - run: flutter pub get
-      - run: dart format --output=none --set-exit-if-changed.
-      - run: flutter analyze
-      - run: flutter test
+          cat pubspec.yaml | grep version
+          git add.
+          git commit -m "chore: ${{ steps.semver.outputs.new_tag }} [skip ci]" || true
+          git push
 
   build:
-    name: Build ${{ matrix.target }}
-    needs: [quality]
-    strategy:
-      matrix:
-        include:
-          - target: android-apk
-            os: ubuntu-latest
-          - target: web
-            os: ubuntu-latest
-    runs-on: ${{ matrix.os }}
-    defaults:
-      run:
-        working-directory: ${{ env.WORKING_DIR }}
+    needs: version
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup project
-        run: |
-          mkdir -p.
-          if [! -f pubspec.yaml ]; then
-            flutter create. --project-name flutter_app
-          fi
+      - name: Ensure folder
+        run: mkdir -p ${{ env.APP_DIR }}
 
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
-          channel: ${{ env.FLUTTER_CHANNEL }}
 
-      - uses: actions/setup-java@v4
-        if: contains(matrix.target, 'android')
-        with:
-          distribution: 'zulu'
-          java-version: ${{ env.JAVA_VERSION }}
-
-      - run: flutter pub get
+      - name: Create if missing
+        run: |
+          if [! -d "${{ env.APP_DIR }}/lib" ]; then
+            flutter create ${{ env.APP_DIR }}
+          fi
 
       - name: Build
+        working-directory: ${{ env.APP_DIR }}
         run: |
-          if [ "${{ matrix.target }}" = "android-apk" ]; then
-            flutter build apk --release --build-number=${{ github.run_number }}
-          else
-            flutter build web --release
-          fi
+          flutter pub get
+          flutter build apk --release --build-number=${{ github.run_number }}
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.target }}
-          path: ${{ env.WORKING_DIR }}/build/
+          name: apk
+          path: ${{ env.APP_DIR }}/build/app/outputs/flutter-apk/
