@@ -1,103 +1,102 @@
-name: Flutter God Mode CI/CD
+name: Flutter CI/CD
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ main ]
   workflow_dispatch:
     inputs:
       bump_version:
-        description: 'Bump version'
+        description: 'Bump'
         default: 'patch'
         type: choice
-        options: [major, minor, patch, none]
+        options: [patch, minor, major, none]
 
 permissions:
   contents: write
 
 env:
-  FLUTTER_VERSION: '3.24.3'
-  APP_DIR: flutter_app
+  APP: flutter_app
 
 jobs:
-  version:
+  setup:
     runs-on: ubuntu-latest
     outputs:
-      new_tag: ${{ steps.semver.outputs.new_tag }}
+      tag: ${{ steps.tag.outputs.new_tag }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           token: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
 
-      # สร้างโฟลเดอร์ก่อนทำอย่างอื่น
-      - name: Create app folder
-        run: |
-          mkdir -p ${{ env.APP_DIR }}
-          ls -la
-
-      - name: Setup Flutter project
-        working-directory: ${{ env.APP_DIR }}
-        run: |
-          if [! -f pubspec.yaml ]; then
-            echo "Creating new Flutter project"
-            cd..
-            flutter create ${{ env.APP_DIR }} --project-name flutter_app
-          fi
-
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
+          flutter-version: '3.24.3'
           channel: stable
-          cache: true
 
-      - name: Configure Git
+      - name: Create project
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [ ! -f "$APP/pubspec.yaml" ]; then
+            rm -rf $APP
+            flutter create $APP --org com.example --project-name myapp
+          fi
+          ls -la $APP
 
-      - uses: anothrNick/github-tag-action@1.71.0
-        id: semver
+      - name: Git config
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+
+      - name: Bump tag
+        id: tag
+        if: github.event.inputs.bump_version!= 'none'
+        uses: anothrNick/github-tag-action@1.71.0
         env:
           GITHUB_TOKEN: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
           DEFAULT_BUMP: ${{ github.event.inputs.bump_version }}
           WITH_V: true
 
-      - name: Update version
-        if: steps.semver.outputs.new_tag!= ''
-        working-directory: ${{ env.APP_DIR }}
+      - name: Update pubspec
+        if: steps.tag.outputs.new_tag!= ''
         run: |
-          sed -i "s/^version:.*/version: ${{ steps.semver.outputs.new_version }}+${{ github.run_number }}/" pubspec.yaml
-          cat pubspec.yaml | grep version
-          git add.
-          git commit -m "chore: ${{ steps.semver.outputs.new_tag }} [skip ci]" || true
+          VERSION=${{ steps.tag.outputs.new_version }}
+          FILE="$APP/pubspec.yaml"
+          
+          echo "Updating $FILE"
+          sed -i "s/^version: .*/version: $VERSION+${{ github.run_number }}/" "$FILE"
+          grep "^version:" "$FILE"
+          
+          git add "$FILE"
+          git commit -m "release: ${{ steps.tag.outputs.new_tag }} [skip ci]" || true
           git push
 
   build:
-    needs: version
+    needs: setup
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Ensure folder
-        run: mkdir -p ${{ env.APP_DIR }}
-
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
+          flutter-version: '3.24.3'
 
-      - name: Create if missing
-        run: |
-          if [! -d "${{ env.APP_DIR }}/lib" ]; then
-            flutter create ${{ env.APP_DIR }}
-          fi
-
-      - name: Build
-        working-directory: ${{ env.APP_DIR }}
-        run: |
-          flutter pub get
-          flutter build apk --release --build-number=${{ github.run_number }}
-
-      - uses: actions/upload-artifact@v4
+      - uses: actions/setup-java@v4
         with:
-          name: apk
-          path: ${{ env.APP_DIR }}/build/app/outputs/flutter-apk/
+          distribution: zulu
+          java-version: '17'
+
+      - name: Build APK
+        run: |
+          # สร้างถ้าไม่มี
+          if [ ! -f "$APP/pubspec.yaml" ]; then
+            flutter create $APP
+          fi
+          
+          cd $APP
+          flutter pub get
+          flutter build apk --release --build-number ${{ github.run_number }}
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release
+          path: flutter_app/build/app/outputs/flutter-apk/app-release.apk
