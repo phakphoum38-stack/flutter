@@ -1,0 +1,113 @@
+name: Flutter Full CI Fixed
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+
+  # =========================
+  # ANDROID + WEB (Linux)
+  # =========================
+  build-android-web:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Flutter Doctor
+        run: flutter doctor -v
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      # ================= ANDROID =================
+      - name: Build APK
+        run: flutter build apk --release
+
+      - name: Build AAB
+        run: flutter build appbundle --release
+
+      # ================= WEB =================
+      - name: Enable Web
+        run: flutter config --enable-web
+
+      - name: Build Web
+        run: flutter build web --release
+
+      # ================= ARTIFACT =================
+      - name: Upload Android Build
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-build
+          path: |
+            build/app/outputs/flutter-apk/*.apk
+            build/app/outputs/bundle/release/*.aab
+
+      - name: Upload Web Build
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-build
+          path: build/web
+
+
+  # =========================
+  # iOS BUILD (macOS)
+  # =========================
+  build-ios:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Flutter Doctor
+        run: flutter doctor -v
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      # ================= FIX iOS =================
+      - name: Install CocoaPods
+        run: sudo gem install cocoapods
+
+      - name: Clean iOS
+        run: flutter clean
+
+      - name: Pod install
+        run: |
+          cd ios
+          pod install
+
+      # ================= BUILD IOS =================
+      - name: Build iOS (no codesign)
+        run: flutter build ios --release --no-codesign
+
+      # ================= CREATE IPA =================
+      - name: Create IPA
+        run: |
+          mkdir -p Payload
+          cp -r build/ios/iphoneos/Runner.app Payload/
+          zip -r app.ipa Payload
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-build
+          path: app.ipa
