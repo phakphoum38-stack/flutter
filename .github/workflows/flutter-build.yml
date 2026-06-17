@@ -1,145 +1,450 @@
-name: Flutter Full Build (Fixed + Artifacts)
+name: Flutter God Mode CI/CD
 
 on:
-  workflow_dispatch:
   push:
-    branches: [ main ]
+    branches: [ "main", "develop", "release/**" ]
+    tags: [ 'v*.*.*' ]
+  pull_request:
+    branches: [ "main", "develop" ]
+  schedule:
+    - cron: '0 18 * * *' # Nightly build ตี 1 ไทย
+  workflow_dispatch:
+    inputs:
+      deploy_track:
+        description: 'Deploy track'
+        required: true
+        default: 'internal'
+        type: choice
+        options: [internal, alpha, beta, production, none]
+      bump_version:
+        description: 'Bump version'
+        required: false
+        default: 'none'
+        type: choice
+        options: [major, minor, patch, none]
+      run_integration:
+        description: 'Run integration tests'
+        required: false
+        default: true
+        type: boolean
+
+env:
+  JAVA_VERSION: '17'
+  FLUTTER_VERSION: '3.24.3'
+  FLUTTER_CHANNEL: 'stable'
+  ANDROID_PACKAGE_NAME: com.yourcompany.app
+  IOS_BUNDLE_ID: com.yourcompany.app
+  FIREBASE_PROJECT_ID: your-firebase-proj
+  SENTRY_ORG: your-org
+  SENTRY_PROJECT: your-flutter-app
+  SHOREBIRD_TOKEN: ${{ secrets.SHOREBIRD_TOKEN }}
 
 jobs:
-
-  build:
+  # 0. VERSION BUMP + TAG
+  version:
+    name: Semantic Version
+    if: github.event.inputs.bump_version!= 'none' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-
+    outputs:
+      new_version: ${{ steps.semver.outputs.new_version }}
+      new_tag: ${{ steps.semver.outputs.new_tag }}
     steps:
-
-      # =========================
-      # 1. Checkout
-      # =========================
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      # =========================
-      # 2. Setup Flutter
-      # =========================
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: true
-
-      # =========================
-      # 3. Find Flutter project root
-      # =========================
-      - name: Detect project root
-        id: detect
-        run: |
-          DIR=$(find . -name pubspec.yaml -not -path "*/.git/*" | head -n 1 | xargs dirname)
-
-          if [ -z "$DIR" ]; then
-            echo "ERROR: pubspec.yaml not found"
-            exit 1
-          fi
-
-          echo "PROJECT=$DIR" >> $GITHUB_OUTPUT
-
-      # =========================
-      # 4. Install dependencies
-      # =========================
-      - name: Flutter Pub Get
-        working-directory: ${{ steps.detect.outputs.PROJECT }}
-        run: flutter pub get
-
-      # =========================
-      # 5. Enable Web
-      # =========================
-      - name: Enable Web
-        run: flutter config --enable-web
-
-      # =========================
-      # 6. Build ALL (Android + Web)
-      # =========================
-      - name: Build APK
-        working-directory: ${{ steps.detect.outputs.PROJECT }}
-        run: flutter build apk --release
-
-      - name: Build AAB
-        working-directory: ${{ steps.detect.outputs.PROJECT }}
-        run: flutter build appbundle --release
-
-      - name: Build Web
-        working-directory: ${{ steps.detect.outputs.PROJECT }}
-        run: flutter build web --release
-
-      # =========================
-      # 7. iOS (macOS job split optional)
-      # =========================
-  ios:
-    runs-on: macos-latest
-
-    steps:
-
       - uses: actions/checkout@v4
-
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
         with:
-          channel: stable
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: anothrNick/github-tag-action@1.71.0
+        id: semver
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEFAULT_BUMP: ${{ github.event.inputs.bump_version }}
+          WITH_V: true
+      - name: Update pubspec.yaml
+        run: |
+          sed -i "s/^version:.*/version: ${{ steps.semver.outputs.new_version }}+${{ github.run_number }}/" pubspec.yaml
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add pubspec.yaml
+          git commit -m "chore: bump version to ${{ steps.semver.outputs.new_version }}"
+          git push
+
+  # 1. SECURITY + DEPENDENCY CHECK
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Snyk to check vulnerabilities
+        uses: snyk/actions/gradle-jdk17@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          command: test
+          args: --file=android/app/build.gradle
+      - name: Dart Dependency Audit
+        run: |
+          dart pub global activate pana
+          pana --no-warning.
+      - name: License Check
+        uses: license-checker/license-checker-action@v1
+        with:
+          fail: true
+
+  # 2. QUALITY + UNIT TEST + INTEGRATION TEST
+  quality:
+    name: Quality Gate
+    runs-on: ubuntu-latest
+    needs: version
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.new_tag || github.ref }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: gradle
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: ${{ env.FLUTTER_CHANNEL }}
+          cache: true
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.pub-cache
+            ~/.gradle
+            ios/Pods
+            build
+          key: deps-${{ runner.os }}-${{ hashFiles('**/pubspec.lock', '**/Podfile.lock', '**/gradle.lockfile') }}
+
+      - run: flutter pub get
+      - run: dart format --output=none --set-exit-if-changed.
+      - run: flutter analyze --fatal-infos --fatal-warnings
+      - run: flutter test --coverage --reporter expanded
+      - run: flutter test integration_test --coverage
+        if: github.event.inputs.run_integration == 'true' || github.event_name == 'schedule'
+
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage/lcov.info
+          token: ${{ secrets.CODECOV_TOKEN }}
+      - name: SonarQube
+        uses: sonarsource/sonarqube-scan-action@master
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+
+  # 3. EMULATOR INTEGRATION TEST + MAESTRO
+  integration_e2e:
+    name: E2E ${{ matrix.device }}
+    needs: quality
+    if: github.event.inputs.run_integration == 'true' || github.event_name == 'schedule'
+    strategy:
+      matrix:
+        device: [pixel_6_api_33, iphone_14]
+    runs-on: ${{ contains(matrix.device, 'iphone') && 'macos-latest' || 'ubuntu-latest' }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: ${{ env.FLUTTER_CHANNEL }}
+          cache: true
+      - name: Android Emulator
+        if: contains(matrix.device, 'pixel')
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 33
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          script: flutter test integration_test --verbose
+      - name: iOS Simulator
+        if: contains(matrix.device, 'iphone')
+        run: |
+          xcrun simctl boot "iPhone 14" || true
+          flutter test integration_test -d "iPhone 14"
+      - name: Maestro UI Test
+        uses: mobile-dev-inc/action-maestro-cloud@v1
+        with:
+          api-key: ${{ secrets.MAESTRO_CLOUD_API_KEY }}
+          app-file: build/app/outputs/flutter-apk/app-debug.apk
+          workspace:.maestro
+
+  # 4. BUILD MATRIX: 6 FLAVORS x 7 PLATFORMS
+  build:
+    name: Build ${{ matrix.flavor }}-${{ matrix.target }}
+    needs: [quality]
+    strategy:
+      fail-fast: false
+      matrix:
+        flavor: [dev, staging, prod]
+        target: [android-aab, android-apk, ios-ipa, web, windows, macos, linux]
+        exclude:
+          - target: windows
+            flavor: dev
+          - target: macos
+            flavor: dev
+          - target: linux
+            flavor: dev
+    runs-on: ${{ contains(matrix.target, 'ios') || contains(matrix.target, 'macos') && 'macos-latest' || contains(matrix.target, 'windows') && 'windows-latest' || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Linux deps
+        if: matrix.target == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
+      - uses: actions/setup-java@v4
+        if: contains(matrix.target, 'android')
+        with:
+          distribution: 'zulu'
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: gradle
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: ${{ env.FLUTTER_CHANNEL }}
           cache: true
 
-      - name: Detect project root
-        id: detect
+      # Signing Setup
+      - name: Android Signing
+        if: contains(matrix.target, 'android')
         run: |
-          DIR=$(find . -name pubspec.yaml | head -n 1 | xargs dirname)
-          echo "PROJECT=$DIR" >> $GITHUB_OUTPUT
-
-      - name: Install dependencies
-        working-directory: ${{ steps.detect.outputs.PROJECT }}
-        run: flutter pub get
-
-      - name: Install CocoaPods
-        run: sudo gem install cocoapods
-
-      - name: Pod install
-        working-directory: ${{ steps.detect.outputs.PROJECT }}/ios
-        run: pod install
-
-      - name: Build iOS (no codesign)
-        working-directory: ${{ steps.detect.outputs.PROJECT }}
-        run: flutter build ios --release --no-codesign
-
-      # =========================
-      # Create IPA
-      # =========================
-      - name: Create IPA
-        working-directory: ${{ steps.detect.outputs.PROJECT }}
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > android/app/keystore.jks
+          cat > android/key.properties <<EOF
+          storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}
+          keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}
+          storeFile=keystore.jks
+          EOF
+      - name: iOS Signing
+        if: matrix.target == 'ios-ipa'
+        env:
+          CERT_B64: ${{ secrets[format('IOS_CERT_BASE64_{0}', matrix.flavor)] }}
+          PP_B64: ${{ secrets[format('IOS_PROVISION_PROFILE_BASE64_{0}', matrix.flavor)] }}
         run: |
-          mkdir -p Payload
-          cp -r build/ios/iphoneos/Runner.app Payload/
-          zip -r app.ipa Payload
+          echo "$CERT_B64" | base64 --decode > /tmp/cert.p12
+          echo "$PP_B64" | base64 --decode > /tmp/profile.mobileprovision
+          security create-keychain -p "ci" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "ci" build.keychain
+          security import /tmp/cert.p12 -k build.keychain -P "${{ secrets.IOS_CERT_PASSWORD }}" -T /usr/bin/codesign
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          cp /tmp/profile.mobileprovision ~/Library/MobileDevice/Provisioning\ Profiles/
 
-      # =========================
-      # 8. UPLOAD ALL ARTIFACTS
-      # =========================
-      - name: Upload Android APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: apk
-          path: ${{ steps.detect.outputs.PROJECT }}/build/app/outputs/flutter-apk/*.apk
+      - run: flutter config --enable-windows-desktop --enable-macos-desktop --enable-linux-desktop
+      - run: flutter pub get
+      - run: cd ios && pod install --repo-update && cd..
+        if: matrix.target == 'ios-ipa'
 
-      - name: Upload AAB
-        uses: actions/upload-artifact@v4
-        with:
-          name: aab
-          path: ${{ steps.detect.outputs.PROJECT }}/build/app/outputs/bundle/release/*.aab
+      # Build Commands
+      - name: Build
+        run: |
+          case "${{ matrix.target }}" in
+            android-aab) flutter build appbundle --release --flavor ${{ matrix.flavor }} --build-number=${{ github.run_number }} ;;
+            android-apk) flutter build apk --release --flavor ${{ matrix.flavor }} --split-per-abi --build-number=${{ github.run_number }} ;;
+            ios-ipa) flutter build ipa --release --flavor ${{ matrix.flavor }} --build-number=${{ github.run_number }} --export-options-plist=ios/ExportOptions-${{ matrix.flavor }}.plist ;;
+            web) flutter build web --release --dart-define=FLAVOR=${{ matrix.flavor }} --web-renderer canvaskit ;;
+            windows) flutter build windows --release --dart-define=FLAVOR=${{ matrix.flavor }} ;;
+            macos) flutter build macos --release --dart-define=FLAVOR=${{ matrix.flavor }} ;;
+            linux) flutter build linux --release --dart-define=FLAVOR=${{ matrix.flavor }} ;;
+          esac
 
-      - name: Upload Web Build
-        uses: actions/upload-artifact@v4
+      # Shorebird Code Push
+      - name: Shorebird Release
+        if: matrix.target == 'android-aab' && matrix.flavor == 'prod'
+        uses: shorebirdtech/shorebird-release-action@v0
         with:
-          name: web
-          path: ${{ steps.detect.outputs.PROJECT }}/build/web
+          args: --platform=android --flutter-version=${{ env.FLUTTER_VERSION }}
+          token: ${{ secrets.SHOREBIRD_TOKEN }}
 
-      - name: Upload iOS IPA
-        uses: actions/upload-artifact@v4
+      # Sentry Upload
+      - name: Sentry Symbols
+        if: matrix.target == 'android-aab' || matrix.target == 'ios-ipa'
+        uses: getsentry/action-release@v1
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ env.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ env.SENTRY_PROJECT }}
         with:
-          name: ios-ipa
-          path: ${{ steps.detect.outputs.PROJECT }}/app.ipa
+          environment: ${{ matrix.flavor }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.flavor }}-${{ matrix.target }}
+          path: |
+            build/**/*.aab
+            build/**/*.apk
+            build/**/*.ipa
+            build/web
+            build/windows
+            build/macos
+            build/linux
+          retention-days: 14
+
+  # 5. FIREBASE TEST LAB
+  firebase_test_lab:
+    name: Firebase Test Lab
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: prod-android-apk
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+      - name: Run Robo Test
+        uses: google-github-actions/firebase-test-lab@v0
+        with:
+          test: android-apk/app-prod-arm64-v8a-release.apk
+          type: robo
+          devices: 'model=Pixel6,version=33,locale=en,orientation=portrait'
+
+  # 6. SCREENSHOTS + METADATA
+  screenshots:
+    name: Generate Screenshots
+    needs: build
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: ${{ env.FLUTTER_CHANNEL }}
+      - run: gem install fastlane
+      - name: Fastlane Screenshots
+        run: cd ios && fastlane snapshot && cd..
+      - uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: ios/fastlane/screenshots
+
+  # 7. DEPLOY
+  deploy:
+    name: Deploy ${{ matrix.channel }}
+    if: github.ref == 'refs/heads/main' || github.event.inputs.deploy_track!= 'none' || startsWith(github.ref, 'refs/tags/v')
+    needs: [prepare, build, firebase_test_lab]
+    strategy:
+      matrix:
+        channel: [play-store, testflight, firebase-distribution, github-pages, shorebird-patch]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+
+      - name: Play Store
+        if: matrix.channel == 'play-store'
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_STORE_JSON_KEY }}
+          packageName: ${{ env.ANDROID_PACKAGE_NAME }}
+          releaseFiles: prod-android-aab/*.aab
+          track: ${{ github.event.inputs.deploy_track || 'internal' }}
+          status: completed
+          inAppUpdatePriority: 5
+
+      - name: TestFlight
+        if: matrix.channel == 'testflight'
+        uses: apple-actions/upload-testflight-build@v1
+        with:
+          app-path: prod-ios-ipa/*.ipa
+          issuer-id: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          api-key-id: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          api-private-key: ${{ secrets.APP_STORE_CONNECT_KEY_CONTENT }}
+
+      - name: Firebase App Distribution
+        if: matrix.channel == 'firebase-distribution'
+        uses: wzieba/Firebase-Distribution-Github-Action@v1
+        with:
+          appId: ${{ secrets.FIREBASE_ANDROID_APP_ID }}
+          serviceCredentialsFileContent: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          groups: qa-team, beta-testers
+          file: prod-android-apk/app-prod-arm64-v8a-release.apk
+          releaseNotesFile: CHANGELOG.md
+
+      - name: GitHub Pages
+        if: matrix.channel == 'github-pages'
+        uses: actions/deploy-pages@v4
+        with:
+          artifact_name: prod-web
+
+      - name: Shorebird Patch
+        if: matrix.channel == 'shorebird-patch' && github.event_name == 'workflow_dispatch'
+        uses: shorebirdtech/shorebird-patch-action@v0
+        with:
+          args: --platform=android --flutter-version=${{ env.FLUTTER_VERSION }}
+          token: ${{ secrets.SHOREBIRD_TOKEN }}
+
+  # 8. RELEASE
+  release:
+    name: Semantic Release
+    if: github.ref == 'refs/heads/main'
+    needs: [prepare, build, deploy]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+      - name: Semantic Release
+        uses: cycjimmy/semantic-release-action@v4
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          extra_plugins: |
+            @semantic-release/changelog
+            @semantic-release/git
+      - run: |
+          for d in desktop-*; do zip -r "${d}.zip" "$d"; done
+          zip -r web.zip prod-web
+      - uses: ncipollo/release-action@v1
+        with:
+          artifacts: "*.apk,*.aab,*.ipa,*.zip"
+          tag: v${{ needs.prepare.outputs.version }}
+          makeLatest: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  # 9. POST: NOTIFY + BADGES + CLEANUP
+  post:
+    name: Post Actions
+    if: always()
+    needs: [quality, build, deploy, release]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Slack Notify
+        uses: 8398a7/action-slack@v3
+        with:
+          status: custom
+          fields: workflow,job,commit,repo,ref,author,took
+          custom_payload: |
+            {
+              text: "${{ job.status }}",
+              attachments: [{
+                color: '${{ job.status }}' === 'success'? 'good' : '${{ job.status }}' === 'failure'? 'danger' : 'warning',
+                fields: [{
+                  title: 'Version',
+                  value: '${{ needs.prepare.outputs.version }}+${{ needs.prepare.outputs.build_number }}',
+                  short: true
+                }]
+              }]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
+        if: always()
+
+      - name: Update Badges
+        uses: schneegans/dynamic-badges-action@v1.7.0
+        with:
+          auth: ${{ secrets.GIST_TOKEN }}
+          gistID: your-gist-id
+          filename: flutter-build.json
+          label: build
+          message: ${{ job.status }}
+          color: ${{ job.status == 'success' && 'brightgreen' || 'red' }}
