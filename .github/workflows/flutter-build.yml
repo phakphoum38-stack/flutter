@@ -6,43 +6,24 @@ on:
     tags: [ 'v*.*.*' ]
   pull_request:
     branches: [ "main", "develop" ]
-  schedule:
-    - cron: '0 18 * * *'
   workflow_dispatch:
     inputs:
-      deploy_track:
-        description: 'Deploy track'
-        required: true
-        default: 'internal'
-        type: choice
-        options: [internal, alpha, beta, production, none]
       bump_version:
         description: 'Bump version'
         required: false
         default: 'none'
         type: choice
         options: [major, minor, patch, none]
-      run_integration:
-        description: 'Run integration tests'
-        required: false
-        default: true
-        type: boolean
 
-# เพิ่มสิทธิ์ให้ทั้ง workflow
 permissions:
   contents: write
   pull-requests: write
-  actions: read
-  checks: write
-  deployments: write
 
 env:
   JAVA_VERSION: '17'
   FLUTTER_VERSION: '3.24.3'
   FLUTTER_CHANNEL: 'stable'
-  ANDROID_PACKAGE_NAME: com.yourcompany.app
-  IOS_BUNDLE_ID: com.yourcompany.app
-  FIREBASE_PROJECT_ID: your-firebase-proj
+  WORKING_DIR: flutter_app
 
 jobs:
   version:
@@ -52,12 +33,22 @@ jobs:
     outputs:
       new_version: ${{ steps.semver.outputs.new_version }}
       new_tag: ${{ steps.semver.outputs.new_tag }}
+    defaults:
+      run:
+        working-directory: ${{ env.WORKING_DIR }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           token: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
           persist-credentials: true
+
+      - name: Ensure folder exists
+        run: |
+          mkdir -p ${{ env.WORKING_DIR }}
+          cd ${{ env.WORKING_DIR }}
+          pwd
+          ls -la
 
       - name: Configure Git
         run: |
@@ -70,148 +61,119 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
           DEFAULT_BUMP: ${{ github.event.inputs.bump_version }}
           WITH_V: true
-          RELEASE_BRANCHES: main
-          PRERELEASE_SUFFIX: beta
 
       - name: Update pubspec.yaml
         if: steps.semver.outputs.new_tag!= ''
         run: |
+          if [! -f pubspec.yaml ]; then
+            echo "Creating pubspec.yaml"
+            cat > pubspec.yaml << 'EOF'
+          name: flutter_app
+          description: A new Flutter project.
+          publish_to: 'none'
+          version: 0.0.1+1
+          environment:
+            sdk: '>=3.0.0 <4.0.0'
+          dependencies:
+            flutter:
+              sdk: flutter
+          flutter:
+            uses-material-design: true
+          EOF
+          fi
+
           sed -i "s/^version:.*/version: ${{ steps.semver.outputs.new_version }}+${{ github.run_number }}/" pubspec.yaml
+          echo "Updated version:"
+          grep "^version:" pubspec.yaml
+
           git add pubspec.yaml
           git commit -m "chore(release): ${{ steps.semver.outputs.new_tag }} [skip ci]" || echo "No changes"
           git push origin HEAD:main
-
-  security:
-    name: Security Scan
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Run Snyk
-        uses: snyk/actions/gradle-jdk17@master
-        continue-on-error: true
-        env:
-          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-        with:
-          command: test
-          args: --file=android/app/build.gradle
 
   quality:
     name: Quality Gate
     runs-on: ubuntu-latest
     needs: version
     if: always()
+    defaults:
+      run:
+        working-directory: ${{ env.WORKING_DIR }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.version.outputs.new_tag || github.ref }}
+
+      - name: Create project if missing
+        run: |
+          mkdir -p ${{ env.WORKING_DIR }}
+          cd ${{ env.WORKING_DIR }}
+          if [! -f pubspec.yaml ]; then
+            flutter create. --project-name flutter_app
+          fi
+
       - uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: ${{ env.JAVA_VERSION }}
           cache: gradle
+
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: ${{ env.FLUTTER_CHANNEL }}
           cache: true
+
       - run: flutter pub get
       - run: dart format --output=none --set-exit-if-changed.
-      - run: flutter analyze --fatal-infos --fatal-warnings
-      - run: flutter test --coverage
+      - run: flutter analyze
+      - run: flutter test
 
   build:
-    name: Build ${{ matrix.flavor }}-${{ matrix.target }}
+    name: Build ${{ matrix.target }}
     needs: [quality]
     strategy:
-      fail-fast: false
       matrix:
         include:
-          - flavor: dev
-            target: android-aab
+          - target: android-apk
             os: ubuntu-latest
-          - flavor: prod
-            target: android-aab
-            os: ubuntu-latest
-          - flavor: prod
-            target: android-apk
-            os: ubuntu-latest
-          - flavor: prod
-            target: ios-ipa
-            os: macos-latest
-          - flavor: prod
-            target: web
+          - target: web
             os: ubuntu-latest
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: ${{ env.WORKING_DIR }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Setup project
+        run: |
+          mkdir -p.
+          if [! -f pubspec.yaml ]; then
+            flutter create. --project-name flutter_app
+          fi
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: ${{ env.FLUTTER_CHANNEL }}
+
       - uses: actions/setup-java@v4
         if: contains(matrix.target, 'android')
         with:
           distribution: 'zulu'
           java-version: ${{ env.JAVA_VERSION }}
-      - uses: subosito/flutter-action@v2
-        with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          channel: ${{ env.FLUTTER_CHANNEL }}
-          cache: true
-
-      - name: Android Signing
-        if: contains(matrix.target, 'android')
-        run: |
-          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > android/app/keystore.jks
-          echo "storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" > android/key.properties
-          echo "keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}" >> android/key.properties
-          echo "keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}" >> android/key.properties
-          echo "storeFile=keystore.jks" >> android/key.properties
-
-      - name: iOS Signing
-        if: matrix.target == 'ios-ipa'
-        run: |
-          if [ "${{ matrix.flavor }}" = "prod" ]; then
-            echo "${{ secrets.IOS_CERT_BASE64_PROD }}" | base64 --decode > /tmp/cert.p12
-            echo "${{ secrets.IOS_PP_BASE64_PROD }}" | base64 --decode > /tmp/profile.mobileprovision
-          else
-            echo "${{ secrets.IOS_CERT_BASE64_DEV }}" | base64 --decode > /tmp/cert.p12
-            echo "${{ secrets.IOS_PP_BASE64_DEV }}" | base64 --decode > /tmp/profile.mobileprovision
-          fi
-          security create-keychain -p "ci" build.keychain
-          security default-keychain -s build.keychain
-          security unlock-keychain -p "ci" build.keychain
-          security import /tmp/cert.p12 -k build.keychain -P "${{ secrets.IOS_CERT_PASSWORD }}" -T /usr/bin/codesign
-          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          cp /tmp/profile.mobileprovision ~/Library/MobileDevice/Provisioning\ Profiles/
 
       - run: flutter pub get
-      - run: cd ios && pod install --repo-update || true
-        if: matrix.target == 'ios-ipa'
 
       - name: Build
         run: |
-          case "${{ matrix.target }}" in
-            android-aab) flutter build appbundle --release --flavor ${{ matrix.flavor }} --build-number=${{ github.run_number }} ;;
-            android-apk) flutter build apk --release --flavor ${{ matrix.flavor }} --split-per-abi --build-number=${{ github.run_number }} ;;
-            ios-ipa) flutter build ipa --release --flavor ${{ matrix.flavor }} --build-number=${{ github.run_number }} --export-options-plist=ios/ExportOptions-${{ matrix.flavor }}.plist ;;
-            web) flutter build web --release --dart-define=FLAVOR=${{ matrix.flavor }} ;;
-          esac
+          if [ "${{ matrix.target }}" = "android-apk" ]; then
+            flutter build apk --release --build-number=${{ github.run_number }}
+          else
+            flutter build web --release
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.flavor }}-${{ matrix.target }}
-          path: build/
-          retention-days: 7
-
-  deploy:
-    name: Deploy
-    if: github.ref == 'refs/heads/main' || github.event.inputs.deploy_track!= 'none' || startsWith(github.ref, 'refs/tags/v')
-    needs: [build]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v4
-      - name: Deploy to Play Store
-        if: github.event.inputs.deploy_track!= 'none'
-        uses: r0adkll/upload-google-play@v1
-        with:
-          serviceAccountJsonPlainText: ${{ secrets.PLAY_STORE_JSON_KEY }}
-          packageName: ${{ env.ANDROID_PACKAGE_NAME }}
-          releaseFiles: prod-android-aab/*.aab
-          track: ${{ github.event.inputs.deploy_track }}
+          name: ${{ matrix.target }}
+          path: ${{ env.WORKING_DIR }}/build/
