@@ -1,0 +1,16 @@
+name: 08 Runner
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  runner-tooling:
+    uses: ./.github/workflows/_flutter-build.yml
+    with:
+      build_apk: true
+      build_web: false
+      artifact_name: runner-tooling
