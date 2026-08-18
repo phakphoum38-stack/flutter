@@ -29,10 +29,20 @@ def safe_relative_path(raw: str) -> Path:
     p = Path(raw)
     if p.is_absolute() or ".." in p.parts:
         raise ValueError(f"unsafe path: {raw}")
-    normalized = p.as_posix().lstrip("./")
-    if normalized == "." or any(normalized == prefix or normalized.startswith(prefix + "/") for prefix in PROTECTED_PREFIXES):
+
+    # Normalize only redundant leading './' segments. Do not strip leading '.+'
+    # indiscriminately, because protected names such as '.github' must remain
+    # identifiable and blocked.
+    normalized = p.as_posix()
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+
+    if normalized == "." or any(
+        normalized == prefix or normalized.startswith(prefix + "/")
+        for prefix in PROTECTED_PREFIXES
+    ):
         raise ValueError(f"protected path: {raw}")
-    return p
+    return Path(normalized)
 
 
 def validate_file(item: dict) -> tuple[Path, str]:
