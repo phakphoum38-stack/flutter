@@ -1,0 +1,27 @@
+name: 03 Contract
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  APP_DIR: flutter_app
+  ARCH_REPO: phakphoum38-stack/ENTERPRISE_API_ARCHITECTURE_LOGIC_TH
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify architecture boundary
+        run: |
+          grep -q 'ENTERPRISE_API_ARCHITECTURE_LOGIC_TH' README.md
+      - name: Verify upstream repository is reachable
+        run: |
+          curl -fsSL -o /tmp/upstream.json https://api.github.com/repos/${ARCH_REPO}
+          test -s /tmp/upstream.json
+      - name: Validate Flutter manifest
+        run: test -f "$APP_DIR/pubspec.yaml"
