@@ -38,16 +38,6 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Set up Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: zulu
-          java-version: '17'
-          cache: gradle
-
-      - name: Flutter doctor
-        run: flutter doctor -v
-
       - name: Flutter dependencies
         working-directory: ${{ env.APP }}
         run: flutter pub get
@@ -66,21 +56,15 @@ jobs:
       - name: Repository inspection
         run: python tools/repo_inspector/main.py .
 
-      - name: Build Android APK
-        working-directory: ${{ env.APP }}
-        run: flutter build apk --release --build-number ${{ github.run_number }}
-
       - name: Build Web
         working-directory: ${{ env.APP }}
         run: flutter build web --release
 
-      - name: Upload Flutter artifacts
+      - name: Upload Web artifact
         uses: actions/upload-artifact@v4
         with:
-          name: flutter-build-${{ github.run_number }}
-          path: |
-            flutter_app/build/app/outputs/flutter-apk/app-release.apk
-            flutter_app/build/web/**
+          name: flutter-web-${{ github.run_number }}
+          path: flutter_app/build/web/**
           if-no-files-found: error
           retention-days: 14
 
@@ -92,11 +76,53 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  android-build:
+    name: Android APK build
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: '17'
+          cache: gradle
+
+      - name: Flutter doctor
+        run: flutter doctor -v
+
+      - name: Flutter dependencies
+        working-directory: ${{ env.APP }}
+        run: flutter pub get
+
+      - name: Build Android APK
+        working-directory: ${{ env.APP }}
+        run: flutter build apk --release --build-number ${{ github.run_number }}
+
+      - name: Upload Android artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: flutter-android-${{ github.run_number }}
+          path: flutter_app/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 14
+
   final-gate:
     name: Final Gate
-    needs: validate
+    needs: [validate, android-build]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Gate passed
-        run: echo "Flutter + Python + repository validation passed."
+        run: echo "Flutter validation, Python inspection, Web build, and Android build passed."
