@@ -50,8 +50,11 @@ jobs:
         working-directory: ${{ env.APP }}
         run: flutter test
 
-      - name: Python inspector tests
+      - name: Repository inspector tests
         run: python -m unittest discover -s tools/repo_inspector/tests -v
+
+      - name: Code Writer tests
+        run: python -m unittest discover -s tools/code_writer -p 'test_*.py' -v
 
       - name: Code Writer safe-plan validation
         run: python tools/code_writer/main.py . --spec tools/code_writer/example.json --plan
@@ -128,4 +131,4 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Gate passed
-        run: echo "Flutter validation, Python inspection, Code Writer safe-plan, Web build, and Android build passed."
+        run: echo "Flutter validation, Python tools, Web build, and Android build passed."
