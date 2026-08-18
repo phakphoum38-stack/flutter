@@ -53,6 +53,9 @@ jobs:
       - name: Python inspector tests
         run: python -m unittest discover -s tools/repo_inspector/tests -v
 
+      - name: Code Writer safe-plan validation
+        run: python tools/code_writer/main.py . --spec tools/code_writer/example.json --plan
+
       - name: Repository inspection
         run: python tools/repo_inspector/main.py .
 
@@ -125,4 +128,4 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Gate passed
-        run: echo "Flutter validation, Python inspection, Web build, and Android build passed."
+        run: echo "Flutter validation, Python inspection, Code Writer safe-plan, Web build, and Android build passed."
