@@ -1,0 +1,34 @@
+name: Contract Compatibility
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tooling repository
+        uses: actions/checkout@v4
+
+      - name: Fetch architecture contract manifest
+        run: |
+          curl --fail --silent --show-error --location \
+            https://raw.githubusercontent.com/phakphoum38-stack/ENTERPRISE_API_ARCHITECTURE_LOGIC_TH/main/current/CONTRACTS/contract-manifest.yml \
+            -o /tmp/contract-manifest.yml
+
+      - name: Require pinned contract version
+        shell: bash
+        run: |
+          test -f /tmp/contract-manifest.yml
+          grep -q 'version: 0.1.0' /tmp/contract-manifest.yml
+          grep -q 'anef-core-contract' /tmp/contract-manifest.yml
+
+      - name: Contract boundary smoke check
+        shell: bash
+        run: |
+          test -f docs/ARCHITECTURE_BOUNDARY.md
+          grep -q 'anef-core-contract: 0.1.0' docs/ARCHITECTURE_BOUNDARY.md
+          grep -q 'Control Plane / Data Plane' docs/ARCHITECTURE_BOUNDARY.md
+          grep -q 'Artifact / Secret Boundary' docs/ARCHITECTURE_BOUNDARY.md
