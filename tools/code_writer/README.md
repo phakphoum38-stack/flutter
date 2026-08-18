@@ -10,10 +10,16 @@ Preview changes first:
 python tools/code_writer/main.py . --spec tools/code_writer/example.json --plan
 ```
 
-Apply only after review:
+Create new files:
 
 ```bash
 python tools/code_writer/main.py . --spec tools/code_writer/example.json --apply
+```
+
+Update an existing file only when explicitly authorized:
+
+```bash
+python tools/code_writer/main.py . --spec tools/code_writer/example.json --apply --allow-update
 ```
 
 The tool:
@@ -23,6 +29,8 @@ The tool:
 - blocks absolute paths, `..`, `.git`, and `.github/workflows`;
 - limits generated files to 256 KiB each;
 - supports plan/apply modes;
+- refuses existing-file overwrites unless `--allow-update` is explicit;
+- prints SHA-256 fingerprints for planned content;
 - never executes generated code.
 
 ## Architecture
@@ -40,7 +48,7 @@ Code Writer --plan
 Review / Policy Gate
         |
         v
-Code Writer --apply
+Code Writer --apply [--allow-update]
         |
         v
 Tests / Flutter / Inspector / Contract Gates
