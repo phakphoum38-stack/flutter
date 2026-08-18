@@ -1,0 +1,18 @@
+name: 01 CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  flutter:
+    uses: ./.github/workflows/_flutter-build.yml
+    with:
+      build_apk: true
+      build_web: false
+      artifact_name: ci
