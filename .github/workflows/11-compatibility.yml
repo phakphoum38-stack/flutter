@@ -1,0 +1,31 @@
+name: 11 Compatibility
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+strategy: null
+
+jobs:
+  flutter-compatibility:
+    strategy:
+      fail-fast: false
+      matrix:
+        flutter: ['3.24.3']
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ matrix.flutter }}
+          channel: stable
+          cache: true
+      - working-directory: flutter_app
+        run: flutter pub get
+      - working-directory: flutter_app
+        run: flutter analyze
+      - working-directory: flutter_app
+        run: flutter test
