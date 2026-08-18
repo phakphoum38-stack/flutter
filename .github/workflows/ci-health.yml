@@ -1,0 +1,70 @@
+name: CI Health Check
+
+on:
+  push:
+    branches: [main, feature/repo-inspector]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-health-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  health:
+    name: CI health and audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Verify required workflows
+        run: |
+          test -f .github/workflows/flutter-build.yml
+          test -f .github/workflows/repo-inspector.yml
+          test -f .github/workflows/ci-health.yml
+
+      - name: Validate toolchain entry points
+        run: |
+          test -f tools/repo_inspector/main.py
+          test -f tools/code_writer/main.py
+          test -f tools/code_writer/example.json
+
+      - name: Validate Code Writer safe plan
+        run: python tools/code_writer/main.py . --spec tools/code_writer/example.json --plan
+
+      - name: Generate CI audit record
+        run: |
+          mkdir -p reports/ci-health
+          cat > reports/ci-health/run.json <<EOF
+          {
+            "workflow": "${GITHUB_WORKFLOW}",
+            "run_id": "${GITHUB_RUN_ID}",
+            "run_number": "${GITHUB_RUN_NUMBER}",
+            "event": "${GITHUB_EVENT_NAME}",
+            "ref": "${GITHUB_REF}",
+            "sha": "${GITHUB_SHA}",
+            "actor": "${GITHUB_ACTOR}",
+            "repository": "${GITHUB_REPOSITORY}"
+          }
+          EOF
+
+      - name: Upload CI audit record
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-health-${{ github.run_number }}
+          path: reports/ci-health/run.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Health check passed
+        run: echo "CI definitions, toolchain entry points, and safe-plan execution are healthy."
