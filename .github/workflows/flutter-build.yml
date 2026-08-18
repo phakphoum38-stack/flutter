@@ -26,6 +26,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: CI revision trace
+        run: |
+          echo "GITHUB_SHA=${GITHUB_SHA}"
+          echo "GITHUB_REF=${GITHUB_REF}"
+          echo "GITHUB_EVENT_NAME=${GITHUB_EVENT_NAME}"
+          echo "GITHUB_RUN_ID=${GITHUB_RUN_ID}"
+          echo "GITHUB_RUN_NUMBER=${GITHUB_RUN_NUMBER}"
+          echo "git HEAD=$(git rev-parse HEAD)"
+          echo "git status:"
+          git status --short
+          echo "Flutter app version:"
+          grep '^version:' "$APP/pubspec.yaml"
+          echo "pubspec SHA256:"
+          sha256sum "$APP/pubspec.yaml"
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
