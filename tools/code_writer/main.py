@@ -3,16 +3,17 @@
 
 The writer does not execute generated code and never writes outside the repository.
 Use --plan to preview changes and --apply to write them.
+Existing files require --allow-update so accidental overwrites are explicit.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
-import re
 from pathlib import Path
 
 MAX_FILE_BYTES = 256 * 1024
-FORBIDDEN_PARTS = {".git", ".github/workflows"}
+PROTECTED_PREFIXES = (".git", ".github/workflows")
 
 
 def load_spec(path: Path) -> dict:
@@ -28,8 +29,8 @@ def safe_relative_path(raw: str) -> Path:
     p = Path(raw)
     if p.is_absolute() or ".." in p.parts:
         raise ValueError(f"unsafe path: {raw}")
-    normalized = p.as_posix()
-    if normalized == "." or normalized.startswith(".git/") or normalized.startswith(".github/workflows/"):
+    normalized = p.as_posix().lstrip("./")
+    if normalized == "." or any(normalized == prefix or normalized.startswith(prefix + "/") for prefix in PROTECTED_PREFIXES):
         raise ValueError(f"protected path: {raw}")
     return p
 
@@ -46,14 +47,18 @@ def validate_file(item: dict) -> tuple[Path, str]:
     return rel, content
 
 
-def render(root: Path, spec: dict) -> list[tuple[Path, str, bool]]:
+def sha256_text(content: str) -> str:
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def render(root: Path, spec: dict) -> list[tuple[Path, str, bool, str | None]]:
     changes = []
     for item in spec["files"]:
         rel, content = validate_file(item)
         target = root / rel
         old = target.read_text(encoding="utf-8") if target.exists() else None
         if old != content:
-            changes.append((rel, content, old is not None))
+            changes.append((rel, content, old is not None, sha256_text(old) if old is not None else None))
     return changes
 
 
@@ -63,6 +68,7 @@ def main() -> int:
     parser.add_argument("--spec", required=True)
     parser.add_argument("--plan", action="store_true")
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument("--allow-update", action="store_true", help="allow replacing existing files")
     args = parser.parse_args()
 
     if args.plan == args.apply:
@@ -73,14 +79,22 @@ def main() -> int:
     changes = render(root, spec)
 
     print(f"Code Writer: {len(changes)} file(s) changed")
-    for rel, content, existed in changes:
+    for rel, content, existed, old_sha in changes:
         action = "UPDATE" if existed else "CREATE"
-        print(f"[{action}] {rel} ({len(content.encode('utf-8'))} bytes)")
+        suffix = f" old_sha256={old_sha}" if old_sha else ""
+        print(f"[{action}] {rel} ({len(content.encode('utf-8'))} bytes, new_sha256={sha256_text(content)}{suffix})")
 
     if args.plan:
         return 0
 
-    for rel, content, _ in changes:
+    blocked = [str(rel) for rel, _, existed, _ in changes if existed and not args.allow_update]
+    if blocked:
+        print("Refusing to overwrite existing files without --allow-update:")
+        for path in blocked:
+            print(f"  {path}")
+        return 2
+
+    for rel, content, _, _ in changes:
         target = root / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
