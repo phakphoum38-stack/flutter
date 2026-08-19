@@ -1,0 +1,60 @@
+name: Assistant Mesh Compatibility
+
+on:
+  push:
+    branches: [main, continuation/30-assistant-mesh-main-flutter]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  validate-mesh:
+    name: Validate Enterprise ↔ Flutter 30-unit mesh
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Flutter workspace
+        uses: actions/checkout@v4
+
+      - name: Fetch Enterprise mesh manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location \
+            https://raw.githubusercontent.com/phakphoum38-stack/ENTERPRISE_API_ARCHITECTURE_LOGIC_TH/main/docs/assistant-mesh-30.yml \
+            -o /tmp/enterprise-assistant-mesh-30.yml
+
+      - name: Validate mesh contract and unit counts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          main = Path('/tmp/enterprise-assistant-mesh-30.yml').read_text()
+          flutter = Path('docs/assistant-mesh-30.yml').read_text()
+
+          def ids(text, prefix):
+              return re.findall(r'^\s+- id: (' + re.escape(prefix) + r'-\d{2})\s*$', text, re.M)
+
+          main_ids = ids(main, 'MAIN')
+          flutter_ids = ids(flutter, 'FLUTTER')
+
+          assert 'contract: anef-core-contract' in main
+          assert 'contract_version: 0.1.0' in main
+          assert 'upstream_contract: anef-core-contract' in flutter
+          assert 'upstream_contract_version: 0.1.0' in flutter
+          assert len(main_ids) == 10, main_ids
+          assert len(flutter_ids) == 20, flutter_ids
+          assert len(set(main_ids)) == 10
+          assert len(set(flutter_ids)) == 20
+
+          for i in range(1, 11):
+              assert f'MAIN-{i:02d}' in main_ids
+          for i in range(1, 21):
+              assert f'FLUTTER-{i:02d}' in flutter_ids
+
+          print('Enterprise units:', len(main_ids))
+          print('Flutter units:', len(flutter_ids))
+          print('Total logical units:', len(main_ids) + len(flutter_ids))
+          print('Contract: anef-core-contract:0.1.0')
+          PY
