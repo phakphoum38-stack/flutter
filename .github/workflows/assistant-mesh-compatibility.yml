@@ -6,6 +6,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+env:
+  ENTERPRISE_MESH_REF: continuation/30-assistant-mesh-main-flutter
+
 jobs:
   validate-mesh:
     name: Validate Enterprise ↔ Flutter 30-unit mesh
@@ -14,13 +17,21 @@ jobs:
       - name: Checkout Flutter workspace
         uses: actions/checkout@v4
 
-      - name: Fetch Enterprise mesh manifest
+      - name: Fetch Enterprise mesh manifest on coordinated ref
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail --silent --show-error --location \
-            https://raw.githubusercontent.com/phakphoum38-stack/ENTERPRISE_API_ARCHITECTURE_LOGIC_TH/main/docs/assistant-mesh-30.yml \
-            -o /tmp/enterprise-assistant-mesh-30.yml
+          url="https://raw.githubusercontent.com/phakphoum38-stack/ENTERPRISE_API_ARCHITECTURE_LOGIC_TH/${ENTERPRISE_MESH_REF}/docs/assistant-mesh-30.yml"
+          curl --fail --silent --show-error --location "$url" -o /tmp/enterprise-assistant-mesh-30.yml
+
+      - name: Fetch pinned Enterprise contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://raw.githubusercontent.com/phakphoum38-stack/ENTERPRISE_API_ARCHITECTURE_LOGIC_TH/${ENTERPRISE_MESH_REF}/current/CONTRACTS/contract-manifest.yml"
+          curl --fail --silent --show-error --location "$url" -o /tmp/contract-manifest.yml
+          grep -q 'anef-core-contract' /tmp/contract-manifest.yml
+          grep -q 'version: 0.1.0' /tmp/contract-manifest.yml
 
       - name: Validate mesh contract and unit counts
         shell: bash
@@ -43,6 +54,9 @@ jobs:
           assert 'contract_version: 0.1.0' in main
           assert 'upstream_contract: anef-core-contract' in flutter
           assert 'upstream_contract_version: 0.1.0' in flutter
+          assert 'logical_units_only: true' in flutter
+          assert 'bounded_execution: true' in flutter
+          assert 'fail_closed_on_upstream_mismatch: true' in flutter
           assert len(main_ids) == 10, main_ids
           assert len(flutter_ids) == 20, flutter_ids
           assert len(set(main_ids)) == 10
@@ -57,4 +71,5 @@ jobs:
           print('Flutter units:', len(flutter_ids))
           print('Total logical units:', len(main_ids) + len(flutter_ids))
           print('Contract: anef-core-contract:0.1.0')
+          print('Execution model: logical units + bounded execution')
           PY
