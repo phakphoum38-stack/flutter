@@ -1,0 +1,16 @@
+name: 04 Integration
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    uses: ./.github/workflows/_flutter-build.yml
+    with:
+      build_apk: true
+      build_web: true
+      artifact_name: integration

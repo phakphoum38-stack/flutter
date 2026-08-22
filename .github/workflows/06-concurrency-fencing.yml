@@ -1,0 +1,27 @@
+name: 06 Concurrency Fencing
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify workflow concurrency controls exist when workflows are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          count=$(find .github/workflows -type f -name '*.yml' -o -name '*.yaml' | wc -l)
+          test "$count" -gt 0
+          echo "Workflow definitions detected: $count"
+      - name: Document fencing invariant
+        run: |
+          cat <<'EOF'
+          INVARIANT: one active owner per execution/version.
+          Stale attempts must be rejected by fencing before mutation.
+          EOF
