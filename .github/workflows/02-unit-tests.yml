@@ -1,0 +1,33 @@
+name: 02 Unit Tests
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  APP_DIR: flutter_app
+  FLUTTER_VERSION: '3.24.3'
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - working-directory: ${{ env.APP_DIR }}
+        run: flutter pub get
+      - working-directory: ${{ env.APP_DIR }}
+        run: flutter test --coverage
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-coverage
+          path: ${{ env.APP_DIR }}/coverage
+          if-no-files-found: warn

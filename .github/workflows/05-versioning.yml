@@ -1,0 +1,27 @@
+name: 05 Versioning
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  APP_DIR: flutter_app
+
+jobs:
+  versioning:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate pubspec version
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          VERSION=$(awk '/^version:/ {print $2; exit}' pubspec.yaml)
+          test -n "$VERSION"
+          echo "Flutter package version: $VERSION"
+      - name: Detect accidental duplicate version definitions
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          test "$(grep -c '^version:' pubspec.yaml)" -eq 1

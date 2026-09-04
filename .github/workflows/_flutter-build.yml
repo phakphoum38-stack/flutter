@@ -1,0 +1,87 @@
+name: Reusable Flutter Build
+
+on:
+  workflow_call:
+    inputs:
+      build_apk:
+        required: false
+        type: boolean
+        default: true
+      build_web:
+        required: false
+        type: boolean
+        default: false
+      artifact_name:
+        required: false
+        type: string
+        default: flutter-build
+
+env:
+  APP_DIR: flutter_app
+  FLUTTER_VERSION: '3.24.3'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Verify Flutter
+        run: flutter --version
+
+      - name: Validate project
+        run: test -f "$APP_DIR/pubspec.yaml"
+
+      - name: Get dependencies
+        working-directory: ${{ env.APP_DIR }}
+        run: flutter pub get
+
+      - name: Analyze
+        working-directory: ${{ env.APP_DIR }}
+        run: flutter analyze
+
+      - name: Test
+        working-directory: ${{ env.APP_DIR }}
+        run: flutter test
+
+      - name: Setup Java
+        if: inputs.build_apk
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Build APK
+        if: inputs.build_apk
+        working-directory: ${{ env.APP_DIR }}
+        run: flutter build apk --release --build-number ${{ github.run_number }}
+
+      - name: Build Web
+        if: inputs.build_web
+        working-directory: ${{ env.APP_DIR }}
+        run: flutter build web --release
+
+      - name: Upload APK
+        if: inputs.build_apk
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact_name }}-apk
+          path: ${{ env.APP_DIR }}/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+
+      - name: Upload Web
+        if: inputs.build_web
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact_name }}-web
+          path: ${{ env.APP_DIR }}/build/web
+          if-no-files-found: error

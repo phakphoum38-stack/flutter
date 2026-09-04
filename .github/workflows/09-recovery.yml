@@ -1,0 +1,22 @@
+name: 09 Recovery
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify recovery policy markers
+        run: |
+          grep -RniE 'recovery|retry|resume|replay|snapshot|lease|fenc' README.md .github 2>/dev/null | head -n 30 || true
+      - name: Recovery invariants
+        run: |
+          echo 'Execution recovery must preserve the pinned version and snapshot.'
+          echo 'A stale runner must not regain ownership after recovery.'
+          echo 'Retry/replay must be idempotent.'

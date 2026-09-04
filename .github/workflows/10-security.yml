@@ -1,0 +1,37 @@
+name: 10 Security
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+env:
+  APP_DIR: flutter_app
+  FLUTTER_VERSION: '3.24.3'
+
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Dependencies
+        working-directory: ${{ env.APP_DIR }}
+        run: flutter pub get
+      - name: Static analysis
+        working-directory: ${{ env.APP_DIR }}
+        run: flutter analyze
+      - name: Check for obvious secret material
+        shell: bash
+        run: |
+          if grep -RInE --exclude-dir=.git --exclude-dir=build '(BEGIN (RSA|EC|OPENSSH) PRIVATE KEY|ghp_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{20,})' .; then
+            echo 'Potential secret material detected.'
+            exit 1
+          fi
