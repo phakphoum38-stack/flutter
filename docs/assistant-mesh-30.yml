@@ -1,0 +1,105 @@
+schema: assistant-mesh/v1
+mesh_id: enterprise-flutter-30
+upstream_repository: phakphoum38-stack/ENTERPRISE_API_ARCHITECTURE_LOGIC_TH
+upstream_manifest: docs/assistant-mesh-30.yml
+upstream_branch: main
+upstream_contract: anef-core-contract
+upstream_contract_version: 0.1.0
+
+purpose: >-
+  Implement the 20 downstream execution/integration units while consuming
+  the 10 Enterprise control-plane units. These are logical work units,
+  not 20 physical workers.
+
+flutter_units:
+  - id: FLUTTER-01
+    role: Contract Consumer
+    upstream: MAIN-03
+    scope: pin and validate anef-core-contract:0.1.0
+  - id: FLUTTER-02
+    role: Handoff Consumer
+    upstream: MAIN-02
+    scope: consume execution handoff and stage metadata
+  - id: FLUTTER-03
+    role: Architecture Boundary Guard
+    upstream: MAIN-03
+    scope: validate control/data plane boundary
+  - id: FLUTTER-04
+    role: Version Validator
+    upstream: MAIN-03
+    scope: Flutter/Dart/application version compatibility
+  - id: FLUTTER-05
+    role: Dependency Resolver
+    upstream: MAIN-05
+    scope: deterministic dependency installation
+  - id: FLUTTER-06
+    role: Static Analysis Worker
+    upstream: MAIN-02
+    scope: flutter analyze and lint evidence
+  - id: FLUTTER-07
+    role: Test Worker
+    upstream: MAIN-02
+    scope: unit/widget test evidence
+  - id: FLUTTER-08
+    role: Build Worker
+    upstream: MAIN-05
+    scope: deterministic APK/build execution
+  - id: FLUTTER-09
+    role: Artifact Verifier
+    upstream: MAIN-07
+    scope: artifact existence, metadata and checksum
+  - id: FLUTTER-10
+    role: Installer/Package Verifier
+    upstream: MAIN-07
+    scope: package integrity and install boundary
+  - id: FLUTTER-11
+    role: Security Scanner
+    upstream: MAIN-08
+    scope: secret/config and dependency boundary checks
+  - id: FLUTTER-12
+    role: Workflow Validator
+    upstream: MAIN-02
+    scope: workflow syntax, trigger and gate consistency
+  - id: FLUTTER-13
+    role: Release Metadata Worker
+    upstream: MAIN-07
+    scope: release name/build number/tag evidence
+  - id: FLUTTER-14
+    role: Compatibility Reporter
+    upstream: MAIN-03
+    scope: report upstream contract compatibility
+  - id: FLUTTER-15
+    role: Evidence Bundler
+    upstream: MAIN-07
+    scope: produce evidence-bundle:v1
+  - id: FLUTTER-16
+    role: Failure Classifier
+    upstream: MAIN-06
+    scope: classify build/test/runtime failures
+  - id: FLUTTER-17
+    role: Recovery Reporter
+    upstream: MAIN-06
+    scope: timeout/retry/recovery evidence without unbounded retry
+  - id: FLUTTER-18
+    role: Integration Reporter
+    upstream: MAIN-09
+    scope: summarize Flutter result for Enterprise
+  - id: FLUTTER-19
+    role: Release Readiness Worker
+    upstream: MAIN-10
+    scope: verify all downstream acceptance gates
+  - id: FLUTTER-20
+    role: Final Gate Consumer
+    upstream: MAIN-10
+    scope: consume final-gate:v1 and fail closed on mismatch
+
+integration:
+  upstream_manifest_url: https://raw.githubusercontent.com/phakphoum38-stack/ENTERPRISE_API_ARCHITECTURE_LOGIC_TH/main/docs/assistant-mesh-30.yml
+  upstream_contract_url: https://raw.githubusercontent.com/phakphoum38-stack/ENTERPRISE_API_ARCHITECTURE_LOGIC_TH/main/current/CONTRACTS/contract-manifest.yml
+  required_main_units: 10
+  required_flutter_units: 20
+  total_units: 30
+  logical_units_only: true
+  bounded_execution: true
+  fail_closed_on_upstream_mismatch: true
+  evidence_required: true
